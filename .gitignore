@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE and OS metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Data, annotations, outputs, and checkpoints
+dataset/
+datasets/
+data/
+Annotations/
+annotations/
+checkpoints/
+checkpoints_sota/
+results/
+runs/
+logs/
+weights/
+*.pth
+*.pt
+*.ckpt
+
+# Archives and large generated files
+*.zip
+*.tar
+*.tar.gz
+*.7z
+*.rar
+*.npy
+*.npz
+*.csv
+
+# Keep only deliberately selected preview images under assets
+*.png
+*.jpg
+*.jpeg
+!assets/*.png
+!assets/*.jpg
+!assets/*.jpeg
