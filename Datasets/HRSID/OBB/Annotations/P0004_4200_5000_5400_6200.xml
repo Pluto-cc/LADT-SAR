@@ -1,0 +1,42 @@
+<annotation verified="no">
+  <folder>Newdata_JPEGImages - &#21103;&#26412;</folder>
+  <filename>P0004_4200_5000_5400_6200.jpg</filename>
+  <path>F:\Newdata_JPEGImages - &#21103;&#26412;\P0004_4200_5000_5400_6200.jpg</path>
+  <source>
+    <database>Unknown</database>
+  </source>
+  <size>
+    <width>800</width>
+    <height>800</height>
+    <depth>1</depth>
+  </size>
+  <segmented>0</segmented>
+  <object>
+    <type>robndbox</type>
+    <name>sea</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <robndbox>
+      <cx>400.3367</cx>
+      <cy>400.9388</cy>
+      <w>792.6735</w>
+      <h>790.0</h>
+      <angle>0.0</angle>
+    </robndbox>
+  </object>
+  <object>
+    <type>robndbox</type>
+    <name>ship</name>
+    <pose>Unspecified</pose>
+    <truncated>0</truncated>
+    <difficult>0</difficult>
+    <robndbox>
+      <cx>709.7475</cx>
+      <cy>516.8954</cy>
+      <w>10.7282</w>
+      <h>48.35</h>
+      <angle>2.651593</angle>
+    </robndbox>
+  </object>
+</annotation>
