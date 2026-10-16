@@ -38,7 +38,7 @@ reorganizing the semantic layout.
 </p>
 
 <p align="center"><i>Overall architecture of the proposed LADT-SAR framework.</i></p>
-The datasets (HRSID/SSDD) are available at https://drive.google.com/file/d/1evhYQZ7Ms7vwle2SEgNLwtzGDUZ1YwMd/view?usp=drive_link
+Our enhanced datasets (HRSID & SSDD) can be obtained at: https://drive.google.com/file/d/1evhYQZ7Ms7vwle2SEgNLwtzGDUZ1YwMd/view?usp=drive_link
 
 ## Highlights
 
