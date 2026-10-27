@@ -1,0 +1,19 @@
+# Ultralytics 🚀 AGPL-3.0 License - https://ultralytics.com/license
+
+# African-wildlife dataset by Ultralytics
+# Documentation: https://docs.ultralytics.com/datasets/detect/african-wildlife/
+# Example usage: yolo train data=african-wildlife.yaml
+# parent
+# ├── ultralytics
+# └── datasets
+#     └── african-wildlife  ← downloads here (100 MB)
+
+# Train/val/test sets as 1) dir: path/to/imgs, 2) file: path/to/imgs.txt, or 3) list: [path/to/imgs1, path/to/imgs2, ..]
+path:  /home/changqi/王长启/Code/ASOC1/dataset_HRSID/all4_common110_seed2024/hrsid_obb_real110 # dataset root dir
+train: images/train # train images
+val: images/val # val images
+test: images/test # test images
+
+# Classes
+names:
+  0: ship
