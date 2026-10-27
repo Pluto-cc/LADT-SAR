@@ -11,7 +11,7 @@ def parse_args():
     parser.add_argument("--name", default=None, help="Run name. Defaults to train_seed<seed>.")
     parser.add_argument("--epochs", type=int, default=100)
     parser.add_argument("--batch", type=int, default=4)
-    parser.add_argument("--imgsz", type=int, default=640)
+    parser.add_argument("--imgsz", type=int, default=512)
     parser.add_argument("--device", default="0")
     return parser.parse_args()
 
