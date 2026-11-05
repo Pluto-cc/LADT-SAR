@@ -1,0 +1,404 @@
+"""Evaluate current-project SAR generation results with the manuscript protocol.
+
+The script combines the metric implementations used by the project:
+
+* FID, PSNR, SSIM and LPIPS follow ``evaluate_sar_complete.py``/``new_evaluate.py``.
+* SAR-FID uses a fixed 1-channel ResNet-101 and its 2048-D globally pooled
+  features loaded from the SAR-FID checkpoint.
+
+Generated files are expected to use names such as ``P0001_2_P0002.png``.  The
+target is matched from the portion after ``_2_``; the real target directory may
+therefore contain ``P0002.png``.  A manifest is written so the exact pairing is
+auditable.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Dict, List, Sequence, Tuple
+
+import numpy as np
+import torch
+import torch.nn as nn
+from PIL import Image
+from scipy import linalg
+from skimage import filters
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
+from torch.utils.data import DataLoader, Dataset
+from torchvision import models, transforms
+from torchvision.transforms import InterpolationMode
+from tqdm import tqdm
+
+
+IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
+
+
+def list_images(directory: Path) -> List[Path]:
+    return sorted(
+        path.resolve()
+        for path in directory.iterdir()
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTS
+    )
+
+
+def target_name_from_output(path: Path) -> str:
+    """Return the target filename represented by an output filename."""
+    name = path.name
+    if "_2_" not in name:
+        return name.casefold()
+    return name.split("_2_", 1)[1].casefold()
+
+
+def build_pairs(target_dir: Path, output_dir: Path) -> List[Tuple[Path, Path]]:
+    targets = {}
+    for path in list_images(target_dir):
+        key = path.name.casefold()
+        if key in targets:
+            raise RuntimeError(f"Duplicate target filename: {path.name}")
+        targets[key] = path
+
+    pairs = []
+    missing = []
+    for output_path in list_images(output_dir):
+        target_name = target_name_from_output(output_path)
+        target_path = targets.get(target_name)
+        if target_path is None:
+            missing.append(output_path.name)
+            continue
+        pairs.append((target_path, output_path))
+
+    if missing:
+        print(f"Warning: {len(missing)} outputs have no matching target")
+        print("First unmatched outputs:", missing[:10])
+    if not pairs:
+        raise RuntimeError(
+            "No target/output pairs found. Check target names and Pxxxx_2_Pxxxx outputs."
+        )
+    return pairs
+
+
+def read_rgb(path: Path, size=None) -> np.ndarray:
+    image = Image.open(path).convert("RGB")
+    if size is not None and image.size != size:
+        image = image.resize(size, Image.Resampling.BICUBIC)
+    return np.asarray(image, dtype=np.float32)
+
+
+def to_gray01(rgb: np.ndarray) -> np.ndarray:
+    return (0.299 * rgb[..., 0] + 0.587 * rgb[..., 1] + 0.114 * rgb[..., 2]) / 255.0
+
+
+def calculate_pair_metrics(pairs: Sequence[Tuple[Path, Path]]) -> Tuple[dict, List[dict]]:
+    rows = []
+    for target_path, output_path in tqdm(pairs, desc="PSNR/SSIM/LPIPS preparation"):
+        target = read_rgb(target_path)
+        output = read_rgb(output_path, size=(target.shape[1], target.shape[0]))
+        rows.append(
+            {
+                "target": target_path.name,
+                "generated": output_path.name,
+                "psnr": float(peak_signal_noise_ratio(target, output, data_range=255)),
+                "ssim": float(structural_similarity(target, output, channel_axis=2, data_range=255)),
+                "epd": float(np.mean(np.abs(filters.sobel(to_gray01(target)) - filters.sobel(to_gray01(output))))),
+            }
+        )
+    summary = {}
+    for key in ("psnr", "ssim", "epd"):
+        values = np.asarray([row[key] for row in rows], dtype=np.float64)
+        summary[key.upper()] = float(values.mean())
+        summary[f"{key.upper()}_std"] = float(values.std(ddof=1)) if len(values) > 1 else 0.0
+    return summary, rows
+
+
+def frechet_distance(mu1, sigma1, mu2, sigma2, eps=1e-6) -> float:
+    diff = mu1 - mu2
+    covmean, _ = linalg.sqrtm(sigma1.dot(sigma2), disp=False)
+    if not np.isfinite(covmean).all():
+        offset = np.eye(sigma1.shape[0]) * eps
+        covmean = linalg.sqrtm((sigma1 + offset).dot(sigma2 + offset))
+    if np.iscomplexobj(covmean):
+        if not np.allclose(np.diagonal(covmean).imag, 0, atol=1e-3):
+            raise ValueError("Frechet covariance product has a large imaginary component")
+        covmean = covmean.real
+    value = diff.dot(diff) + np.trace(sigma1) + np.trace(sigma2) - 2 * np.trace(covmean)
+    return float(max(value, 0.0))
+
+
+def calculate_fid(target_dir: Path, output_dir: Path, device: torch.device, batch_size: int, workers: int) -> float:
+    try:
+        from pytorch_fid import fid_score
+    except ImportError as exc:
+        raise RuntimeError("FID requires: pip install pytorch-fid") from exc
+    return float(
+        fid_score.calculate_fid_given_paths(
+            [str(target_dir), str(output_dir)],
+            batch_size=batch_size,
+            device=str(device),
+            dims=2048,
+            num_workers=workers,
+        )
+    )
+
+
+class PairedLPIPS:
+    def __init__(self, device: torch.device, network: str):
+        try:
+            import lpips
+        except ImportError as exc:
+            raise RuntimeError("LPIPS requires: pip install lpips") from exc
+        self.model = lpips.LPIPS(net=network).to(device).eval()
+        self.device = device
+
+    @torch.inference_mode()
+    def score(self, target: np.ndarray, output: np.ndarray) -> float:
+        tensors = []
+        for image in (target, output):
+            # read_rgb returns H x W x 3; LPIPS expects N x 3 x H x W.
+            tensor = torch.from_numpy(image).float().permute(2, 0, 1).unsqueeze(0)
+            tensor = tensor.div(255.0).mul(2.0).sub(1.0)
+            tensors.append(tensor.to(self.device))
+        return float(self.model(tensors[0], tensors[1]).item())
+
+
+class SARFIDEncoder(nn.Module):
+    """ResNet-101 SAR-FID encoder with 2048-D global pooled features."""
+
+    def __init__(self):
+        super().__init__()
+        try:
+            backbone = models.resnet101(weights=None)
+        except TypeError:
+            backbone = models.resnet101(pretrained=False)
+        backbone.conv1 = nn.Conv2d(1, 64, 7, 2, 3, bias=False)
+        backbone.fc = nn.Identity()
+        self.backbone = backbone
+
+    def forward(self, images: torch.Tensor) -> torch.Tensor:
+        return self.backbone(images)
+
+
+class SARFeatureDataset(Dataset):
+    def __init__(self, paths: Sequence[Path], image_size: int):
+        self.paths = list(paths)
+        self.transform = transforms.Compose(
+            [
+                transforms.Grayscale(num_output_channels=1),
+                transforms.Resize((image_size, image_size), interpolation=InterpolationMode.BILINEAR),
+                transforms.ToTensor(),
+                transforms.Normalize((0.5,), (0.5,)),
+            ]
+        )
+
+    def __len__(self):
+        return len(self.paths)
+
+    def __getitem__(self, index):
+        with Image.open(self.paths[index]) as image:
+            return self.transform(image.convert("L"))
+
+
+def load_sar_encoder(checkpoint_path: Path, device: torch.device):
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    metadata = checkpoint.get("metadata", {}) if isinstance(checkpoint, dict) else {}
+    model = SARFIDEncoder()
+    raw_state = checkpoint.get("model_state", checkpoint)
+    if not isinstance(raw_state, dict):
+        raise RuntimeError("SAR-FID checkpoint does not contain a state-dict")
+
+    expected = model.state_dict()
+    expected_keys = set(expected)
+
+    # Check the common checkpoint naming conventions used by DataParallel and
+    # wrappers such as `model` or `encoder`.
+    candidates = []
+    for prefix in ("", "module.", "model.", "encoder.", "module.model.", "module.encoder."):
+        candidate = {}
+        for key, value in raw_state.items():
+            if not torch.is_tensor(value):
+                continue
+            normalized = key
+            if prefix and normalized.startswith(prefix):
+                normalized = normalized[len(prefix):]
+            elif prefix:
+                continue
+            candidate[normalized] = value
+        if candidate:
+            candidates.append(candidate)
+
+    # The encoder is wrapped as `backbone` in this script. If the checkpoint
+    # stores bare torchvision ResNet keys, add that wrapper prefix.
+    expanded_candidates = []
+    for candidate in candidates:
+        expanded_candidates.append(candidate)
+        if not any(key.startswith("backbone.") for key in candidate):
+            expanded_candidates.append({f"backbone.{key}": value for key, value in candidate.items()})
+
+    load_error = None
+    for candidate in expanded_candidates:
+        state = {key: value for key, value in candidate.items() if key in expected_keys}
+        if not state:
+            continue
+        try:
+            incompatible = model.load_state_dict(state, strict=False)
+        except RuntimeError as exc:
+            load_error = str(exc)
+            continue
+        if not incompatible.missing_keys:
+            break
+        load_error = (
+            f"missing={incompatible.missing_keys}, "
+            f"unexpected={incompatible.unexpected_keys}"
+        )
+    else:
+        raise RuntimeError(
+            "SAR-FID checkpoint is incompatible with the ResNet-101/2048-D "
+            f"encoder. {load_error or 'No matching state-dict keys were found.'}"
+        )
+
+    feature_dim = int(metadata.get("feature_dim", 2048))
+    if feature_dim != 2048:
+        print(
+            f"Warning: checkpoint metadata reports feature_dim={feature_dim}; "
+            "the loaded ResNet-101 encoder outputs 2048 dimensions."
+        )
+    model.to(device).eval()
+    return model, metadata
+
+
+@torch.inference_mode()
+def sar_activations(paths, model, image_size, batch_size, workers, device):
+    loader = DataLoader(
+        SARFeatureDataset(paths, image_size),
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=workers,
+        pin_memory=device.type == "cuda",
+    )
+    features = []
+    for batch in loader:
+        features.append(model(batch.to(device, non_blocking=True)).cpu().numpy())
+    return np.concatenate(features, axis=0).astype(np.float64)
+
+
+def activation_statistics(features):
+    if len(features) < 2:
+        raise ValueError("At least two images are required for SAR-FID")
+    return np.mean(features, axis=0), np.cov(features, rowvar=False)
+
+
+def calculate_sar_fid(pairs, checkpoint, device, image_size, batch_size, workers):
+    model, metadata = load_sar_encoder(checkpoint, device)
+    # An explicitly supplied evaluation size takes precedence over checkpoint
+    # metadata so that the protocol can be controlled from the caller.
+    encoder_size = int(image_size if image_size is not None else metadata.get("input_size", 224))
+    target_paths = [pair[0] for pair in pairs]
+    output_paths = [pair[1] for pair in pairs]
+    target_features = sar_activations(target_paths, model, encoder_size, batch_size, workers, device)
+    output_features = sar_activations(output_paths, model, encoder_size, batch_size, workers, device)
+    return frechet_distance(
+        *activation_statistics(target_features),
+        *activation_statistics(output_features),
+    ), encoder_size
+
+
+def make_fid_dirs(pairs: Sequence[Tuple[Path, Path]], image_size: int):
+    root = Path(tempfile.mkdtemp(prefix="evaluate_zhibiao_"))
+    target_dir = root / "target"
+    output_dir = root / "output"
+    target_dir.mkdir()
+    output_dir.mkdir()
+    for index, (target, output) in enumerate(pairs):
+        for source, destination in ((target, target_dir), (output, output_dir)):
+            image = Image.open(source).convert("RGB").resize((image_size, image_size), Image.Resampling.BICUBIC)
+            image.save(destination / f"{index:06d}.png")
+    return root, target_dir, output_dir
+
+
+def write_csv(path: Path, rows: Sequence[dict]):
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--target-dir", type=Path, required=True)
+    parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--sar-ckpt", type=Path, required=True)
+    parser.add_argument("--save-dir", type=Path, required=True)
+    parser.add_argument("--batch-size", type=int, default=16)
+    parser.add_argument("--num-workers", type=int, default=0)
+    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
+    parser.add_argument("--lpips-net", choices=("alex", "vgg", "squeeze"), default="alex")
+    parser.add_argument("--fid-image-size", type=int, default=299)
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+    target_dir = args.target_dir.expanduser().resolve()
+    output_dir = args.output_dir.expanduser().resolve()
+    checkpoint = args.sar_ckpt.expanduser().resolve()
+    save_dir = args.save_dir.expanduser().resolve()
+    for path in (target_dir, output_dir):
+        if not path.is_dir():
+            raise NotADirectoryError(str(path))
+    if not checkpoint.is_file():
+        raise FileNotFoundError(str(checkpoint))
+    save_dir.mkdir(parents=True, exist_ok=True)
+    device = torch.device(args.device)
+    if device.type == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but unavailable")
+
+    pairs = build_pairs(target_dir, output_dir)
+    manifest = [
+        {"target": str(target), "generated": str(output), "target_name": target.name, "generated_name": output.name}
+        for target, output in pairs
+    ]
+    write_csv(save_dir / "pair_manifest.csv", manifest)
+    print(f"Matched pairs: {len(pairs)}")
+    print(f"Pair manifest: {save_dir / 'pair_manifest.csv'}")
+
+    pair_summary, pair_rows = calculate_pair_metrics(pairs)
+    lpips_metric = PairedLPIPS(device, args.lpips_net)
+    for row, (target_path, output_path) in zip(pair_rows, pairs):
+        target = read_rgb(target_path)
+        output = read_rgb(output_path, size=(target.shape[1], target.shape[0]))
+        row["lpips"] = lpips_metric.score(target, output)
+    lpips_values = np.asarray([row["lpips"] for row in pair_rows], dtype=np.float64)
+    pair_summary["LPIPS"] = float(lpips_values.mean())
+    pair_summary["LPIPS_std"] = float(lpips_values.std(ddof=1)) if len(lpips_values) > 1 else 0.0
+    write_csv(save_dir / "paired_metrics.csv", pair_rows)
+
+    temp_root, fid_target_dir, fid_output_dir = make_fid_dirs(pairs, args.fid_image_size)
+    try:
+        fid = calculate_fid(fid_target_dir, fid_output_dir, device, args.batch_size, args.num_workers)
+    finally:
+        shutil.rmtree(temp_root, ignore_errors=True)
+    sar_fid, sar_input_size = calculate_sar_fid(
+        pairs, checkpoint, device, 258, args.batch_size, args.num_workers
+    )
+    summary = {
+        "num_pairs": len(pairs),
+        "FID": fid,
+        "SAR-FID": sar_fid,
+        "SAR-FID_encoder": "ResNet101 + 2048-D global pooled features",
+        "SAR-FID_input_size": sar_input_size,
+        "FID_input_size": args.fid_image_size,
+        "LPIPS_network": args.lpips_net,
+        **pair_summary,
+    }
+    (save_dir / "metrics.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (save_dir / "metrics.txt").write_text("\n".join(f"{key}: {value}" for key, value in summary.items()) + "\n", encoding="utf-8")
+    print(json.dumps(summary, indent=2))
+
+
+if __name__ == "__main__":
+    main()
