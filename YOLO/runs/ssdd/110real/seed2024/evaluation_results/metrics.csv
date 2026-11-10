@@ -1,0 +1,14 @@
+﻿metric,value,percentage
+metrics/precision(B),0.843109,84.31%
+metrics/recall(B),0.770593,77.06%
+metrics/mAP50(B),0.874736,87.47%
+metrics/mAP75(B),0.597773,59.78%
+metrics/mAP90(B),0.024727,2.47%
+metrics/mAP50-95(B),0.527678,52.77%
+fitness,0.475813,47.58%
+Precision,0.843109,84.31%
+Recall,0.770593,77.06%
+mAP50,0.874736,87.47%
+mAP50:95,0.527678,52.77%
+mAP75,0.597773,59.78%
+F1,0.805222,80.52%
