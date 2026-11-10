@@ -38,9 +38,14 @@ reorganizing the semantic layout.
 </p>
 
 <p align="center"><i>Overall architecture of the proposed LADT-SAR framework.</i></p>
-Our enhanced datasets (contained Annotations, Enhanced images and Splits pairs of HRSID & SSDD) can be obtained at: https://drive.google.com/file/d/1evhYQZ7Ms7vwle2SEgNLwtzGDUZ1YwMd/view?usp=drive_link.
+Our enhanced datasets (contained Annotations, Enhanced images and Splits pairs of HRSID & SSDD) can be obtained at: 
+https://drive.google.com/file/d/1uDG7PhWyG_6-lfYDQfwqIrftJn3WncCh/view?usp=drive_link.
 
-Our divided datasets for YOLO detection experiments (contained Labels and Images of HRSID & SSDD) can be obtained at https://drive.google.com/file/d/1AXrh5x0WJPWAqx7SzYhP6Cwo4olBhpaW/view?usp=drive_link
+Our divided datasets for YOLO detection experiments (contained Labels and Images of HRSID & SSDD) can be obtained at 
+https://drive.google.com/file/d/1NlN1O-w4AazG9GbltJgywclYgOU42GIr/view?usp=drive_link
+
+The inference results and weights of our generated model can be obtained:
+
 
 ## Highlights
 
