@@ -383,7 +383,7 @@ def main():
     finally:
         shutil.rmtree(temp_root, ignore_errors=True)
     sar_fid, sar_input_size = calculate_sar_fid(
-        pairs, checkpoint, device, 258, args.batch_size, args.num_workers
+        pairs, checkpoint, device, 233, args.batch_size, args.num_workers
     )
     summary = {
         "num_pairs": len(pairs),
