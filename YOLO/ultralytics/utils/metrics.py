@@ -769,7 +769,6 @@ class Metric(SimpleClass):
         self.all_ap = []  # (nc, 10)
         self.ap_class_index = []  # (nc, )
         self.nc = 0
-        self.scale = 1.0
     @property
     def ap50(self) -> Union[np.ndarray, List]:
         """
@@ -834,12 +833,9 @@ class Metric(SimpleClass):
         Return the mean Average Precision (mAP) at an IoU threshold of 0.5.
 
         Returns:
-            (float): The mAP at an IoU threshold of 0.5 x scale.
+            (float): The mAP at an IoU threshold of 0.5.
         """
-        if not len(self.all_ap):
-            return 0.0
-        base = self.all_ap[:, 0].mean()
-        return float(np.clip(base * self.scale, 0.0, 1.0))
+        return self.all_ap[:, 0].mean() if len(self.all_ap) else 0.0
 
     @property
     def map75(self) -> float:
