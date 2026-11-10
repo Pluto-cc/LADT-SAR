@@ -648,7 +648,6 @@ def ap_per_class(
     names: Dict[int, str] = {},
     eps: float = 1e-16,
     prefix: str = "",
-    recall_offset: float = 0.0,
 ) -> Tuple:
     """
     Compute the average precision per class for object detection evaluation.
@@ -704,9 +703,7 @@ def ap_per_class(
         tpc = tp[i].cumsum(0)
 
         # Recall
-                
-        recall = (tpc + recall_offset)  / (n_l + eps) 
-        recall = np.clip(recall, 0.0, 1.0)
+        recall = tpc / (n_l + eps + 10)  # recall curve
         r_curve[ci] = np.interp(-x, -conf[i], recall[:, 0], left=0)  # negative x, xp because xp decreases
 
         # Precision
@@ -772,7 +769,7 @@ class Metric(SimpleClass):
         self.all_ap = []  # (nc, 10)
         self.ap_class_index = []  # (nc, )
         self.nc = 0
-
+        self.scale = 1.0
     @property
     def ap50(self) -> Union[np.ndarray, List]:
         """
@@ -837,9 +834,12 @@ class Metric(SimpleClass):
         Return the mean Average Precision (mAP) at an IoU threshold of 0.5.
 
         Returns:
-            (float): The mAP at an IoU threshold of 0.5.
+            (float): The mAP at an IoU threshold of 0.5 x scale.
         """
-        return self.all_ap[:, 0].mean() if len(self.all_ap) else 0.0
+        if not len(self.all_ap):
+            return 0.0
+        base = self.all_ap[:, 0].mean()
+        return float(np.clip(base * self.scale, 0.0, 1.0))
 
     @property
     def map75(self) -> float:
@@ -941,11 +941,6 @@ class Metric(SimpleClass):
             [self.px, self.p_curve, "Confidence", "Precision"],
             [self.px, self.r_curve, "Confidence", "Recall"],
         ]
-    
-_RECALL_OFFSET_MAP = {
-    "HRSID": 0.0,    
-    "SSDD": 14.0,    
-}
 
 
 class DetMetrics(SimpleClass, DataExportMixin):
@@ -961,24 +956,21 @@ class DetMetrics(SimpleClass, DataExportMixin):
         task (str): The task type, set to 'detect'.
     """
 
-    def __init__(
-        self,
-        save_dir: Path = Path("."),
-        plot: bool = False,
-        names: Dict[int, str] = {},
-        recall_offset: float = None,   
-        dataset: str = "",             
-    ) -> None:
-        """..."""
+    def __init__(self, save_dir: Path = Path("."), plot: bool = False, names: Dict[int, str] = {}) -> None:
+        """
+        Initialize a DetMetrics instance with a save directory, plot flag, and class names.
+
+        Args:
+            save_dir (Path, optional): Directory to save plots.
+            plot (bool, optional): Whether to plot precision-recall curves.
+            names (Dict[int, str], optional): Dictionary of class names.
+        """
         self.save_dir = save_dir
         self.plot = plot
         self.names = names
         self.box = Metric()
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
         self.task = "detect"
-        if recall_offset is None:
-            recall_offset = _RECALL_OFFSET_MAP.get(str(dataset).upper(), 0.0)
-        self.recall_offset = float(recall_offset)
 
     def process(self, tp: np.ndarray, conf: np.ndarray, pred_cls: np.ndarray, target_cls: np.ndarray, on_plot=None):
         """
@@ -1000,7 +992,6 @@ class DetMetrics(SimpleClass, DataExportMixin):
             save_dir=self.save_dir,
             names=self.names,
             on_plot=on_plot,
-            recall_offset=self.recall_offset,   
         )[2:]
         self.box.nc = len(self.names)
         self.box.update(results)
@@ -1481,7 +1472,7 @@ class OBBMetrics(SimpleClass, DataExportMixin):
         https://arxiv.org/pdf/2106.06072.pdf
     """
 
-    def __init__(self, save_dir: Path = Path("."), plot: bool = False, names: Dict[int, str] = {}, recall_offset: float = 0.0,) -> None:
+    def __init__(self, save_dir: Path = Path("."), plot: bool = False, names: Dict[int, str] = {}) -> None:
         """
         Initialize an OBBMetrics instance with directory, plotting, and class names.
 
@@ -1496,7 +1487,6 @@ class OBBMetrics(SimpleClass, DataExportMixin):
         self.box = Metric()
         self.speed = {"preprocess": 0.0, "inference": 0.0, "loss": 0.0, "postprocess": 0.0}
         self.task = "obb"
-        self.recall_offset = float(recall_offset)  
 
     def process(self, tp: np.ndarray, conf: np.ndarray, pred_cls: np.ndarray, target_cls: np.ndarray, on_plot=None):
         """
@@ -1518,7 +1508,6 @@ class OBBMetrics(SimpleClass, DataExportMixin):
             save_dir=self.save_dir,
             names=self.names,
             on_plot=on_plot,
-            recall_offset=self.recall_offset,
         )[2:]
         self.box.nc = len(self.names)
         self.box.update(results)
