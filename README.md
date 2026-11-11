@@ -41,10 +41,11 @@ reorganizing the semantic layout.
 Our enhanced datasets (contained Annotations, Enhanced images and Splits pairs of HRSID & SSDD) can be obtained at: 
 https://drive.google.com/file/d/1uDG7PhWyG_6-lfYDQfwqIrftJn3WncCh/view?usp=drive_link
 
-Our divided datasets for YOLO detection experiments (contained Labels and Images of HRSID & SSDD) can be obtained at 
+Our divided datasets for YOLO detection experiments (contained Labels and Images of HRSID & SSDD) can be obtained at：
+
 https://drive.google.com/file/d/1NlN1O-w4AazG9GbltJgywclYgOU42GIr/view?usp=drive_link
 
-The inference results and weights of our generated model can be obtained:
+The inference results and weights of our generated model can be obtained at:
 https://drive.google.com/file/d/1vUNfRxOyPRag_pD61WxYnZYaxalcllN_/view?usp=drive_link
 
 ## Highlights
