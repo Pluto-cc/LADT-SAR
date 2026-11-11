@@ -181,12 +181,6 @@ applied to paired real and generated images.
 `-- requirements.txt
 ```
 
-This public repository is a **project and annotation preview**. It currently
-contains the method overview, representative annotation visualizations, and a
-reference environment specification. It does not contain the complete training
-implementation, full derived annotation set, model checkpoints, or original
-HRSID/SSDD images.
-
 ## Environment
 
 ### Reference configuration
